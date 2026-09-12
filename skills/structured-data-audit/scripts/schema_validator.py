@@ -30,7 +30,14 @@ class SchemaValidator:
                 syntax_error_items.append(err)
 
             # 2. Check Homepage Schemas
-            if p.page_type == "homepage":
+            if(
+                p.page_type == "homepage"
+                and is_rule_applicable(
+                    "missing_org_schema",
+                    p.page_type,
+                    self.site_type
+                )
+            ):
                 homepage_url = p.url
                 org_schemas = extractor.get_schemas_by_type("Organization") + extractor.get_schemas_by_type("Corporation") + extractor.get_schemas_by_type("LocalBusiness")
                 if not org_schemas:

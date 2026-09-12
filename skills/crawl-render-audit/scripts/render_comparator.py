@@ -61,7 +61,26 @@ class RenderComparator:
                 alt = (img.get("alt") or "").strip()
                 src = img.get("src") or ""
                 # Ignore tiny tracking pixels or icons
-                if not alt and not any(skip in src.lower() for skip in ["pixel", "track", "icon", "spacer", "logo", "decorative"]):
+                if(
+                    not alt
+                    and src
+                    and not any(
+                        skip in src.lower()
+                        for skip in [
+                            "pixel",
+                            "track",
+                            "icon",
+                            "spacer",
+                            "logo",
+                            "decoractive",
+                            "badge",
+                            "button",
+                            "flag",
+                            "arrow",
+                            "chevron",
+                        ]
+                    )
+                ):
                     missing_alt_images.append((p.url, src))
                     if p.url not in affected_image_urls:
                         affected_image_urls.append(p.url)

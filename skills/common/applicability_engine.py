@@ -43,6 +43,7 @@ RULE_PAGE_APPLICABILITY: Dict[str, Set[str]] = {
                               "about", "landing", "category"},
     "brand_entity_collision_risk": {"homepage"},
     "homepage_lacks_substantive_entity_description": {"homepage"},
+    "missing_org_schema":{"homepage"},
 
     # Freshness/corroboration applies broadly
     "stale_copyright": {"homepage", "product_detail", "product", "pricing", "service", "about",
@@ -58,6 +59,7 @@ RULE_SITE_APPLICABILITY: Dict[str, Set[str]] = {
     "incomplete_offer_schema": {"ecommerce", "marketplace"},
     "price_schema_mismatch": {"ecommerce", "marketplace", "saas"},
     "conflicting_pricing_claims": {"ecommerce", "saas", "marketplace"},
+    "missing_org_schema": {"corporate", "saas", "ecommerce", "marketplace", "local_business", "nonprofit"},
 }
 
 
