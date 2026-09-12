@@ -56,8 +56,10 @@ def test_duplicate_pages_without_canonical_triggers_finding():
     assert "duplicate" in issue["evidence"].lower()
 
 
-def test_conflicting_canonical_target_triggers_finding():
-    # Page declares a canonical pointing to a completely different domain or page
+def test_different_path_canonical_is_not_a_conflict():
+    # Corrected behavior (Phase 5): a canonical legitimately points to a DIFFERENT
+    # preferred URL (normalized, localized, or master variant). A differing path or
+    # host is NOT a defect and must not be reported.
     p1 = PageData(
         url="https://example.com/page-a",
         status_code=200,
@@ -68,7 +70,21 @@ def test_conflicting_canonical_target_triggers_finding():
     comparator = RenderComparator([p1])
     issues = comparator.audit_render_gaps()
 
-    assert any(i.get("issue_type") == "conflicting_canonical" for i in issues)
+    assert not any(i.get("issue_type") == "conflicting_canonical" for i in issues)
+
+
+def test_localized_master_canonical_is_not_a_conflict():
+    # Canonical pointing to a localized master variant (/intl/ALL_in/...) is valid.
+    p1 = PageData(
+        url="https://example.com/howyoutubeworks/copyright",
+        status_code=200,
+        raw_html="<html><head><link rel='canonical' href='https://example.com/intl/ALL_in/howyoutubeworks/copyright/'></head><body><p>Copyright policy</p></body></html>",
+        text_content="Copyright policy",
+    )
+    comparator = RenderComparator([p1])
+    issues = comparator.audit_render_gaps()
+
+    assert not any(i.get("issue_type") == "conflicting_canonical" for i in issues)
 
 
 def test_low_confidence_cannot_become_critical_or_high():

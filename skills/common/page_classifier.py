@@ -17,11 +17,10 @@ PAGE_TYPES = [
 ]
 
 # Legal/policy page indicators
-LEGAL_KEYWORDS = {"privacy", "policy", "policies", "legal", "disclaimer",
-                  "cookie", "cookies", "gdpr", "ccpa", "data-protection",
-                  "data protection"}
+PRIVACY_KEYWORDS = {"privacy", "cookie", "cookies", "gdpr", "ccpa", "data-protection", "data protection"}
 TERMS_KEYWORDS = {"terms", "conditions", "tos", "terms-of-service",
                   "terms-of-use", "acceptable-use", "eula", "agreement"}
+LEGAL_KEYWORDS = {"legal", "disclaimer", "compliance", "copyright-policy", "trademark"}
 
 # Page type signals by keyword clusters
 _PRODUCT_DETAIL_SIGNALS = {"add to cart", "buy now", "add to bag", "in stock",
@@ -54,8 +53,19 @@ def classify_page(url: str, title: str = "", h1_tags: List[str] = None,
     text_lower = (text_content or "").lower()[:3000]  # First 3000 chars for efficiency
     all_headings = " ".join(h1_tags + h2_tags).lower()
 
-    # 1. HOMEPAGE — empty path or index
+    # 1. HOMEPAGE / ROOT PORTAL — empty path, index, or root portal identifiers
+    portal_names = {
+        "home", "index", "index.html", "index.htm", "index.php", "default", "default.html",
+        "main", "main_page", "main-page", "portal", "welcome", "frontpage",
+        "accueil", "accueil_principal", "portada", "pagina_principale", "strona_glowna", "главная"
+    }
     if not path or path in ("", "index.html", "index.htm", "index.php", "home"):
+        return "homepage"
+    if path in portal_names or (path_segments and path_segments[-1] in portal_names):
+        return "homepage"
+    if any(title_lower == t or title_lower.startswith(t + " -") or title_lower.startswith(t + " |") for t in ("main page", "welcome", "home", "portal", "overview", "front page")):
+        return "homepage"
+    if any(h in ("main page", "welcome", "home", "portal", "front page") for h in [h.strip().lower() for h in h1_tags]):
         return "homepage"
 
     # 2. STRUCTURED DATA signals (strongest signal)
@@ -69,13 +79,13 @@ def classify_page(url: str, title: str = "", h1_tags: List[str] = None,
     if "article" in schema_types or "newsarticle" in schema_types or "blogposting" in schema_types:
         return "article"
 
-    # 3. LEGAL / PRIVACY / TERMS — check URL and content
+    # 3. PRIVACY / TERMS / LEGAL (prioritized: privacy/terms before general legal)
+    if _matches_any(path_segments, PRIVACY_KEYWORDS) or any(kw in title_lower for kw in ("privacy", "cookie policy")):
+        return "privacy"
+    if _matches_any(path_segments, TERMS_KEYWORDS) or any(kw in title_lower for kw in ("terms of service", "terms of use", "conditions of use")):
+        return "terms"
     if _matches_any(path_segments, LEGAL_KEYWORDS) or _matches_any(title_lower.split(), LEGAL_KEYWORDS):
         return "legal"
-    if _matches_any(path_segments, {"privacy"}) or "privacy" in title_lower:
-        return "privacy"
-    if _matches_any(path_segments, TERMS_KEYWORDS) or _matches_any(title_lower.split(), TERMS_KEYWORDS):
-        return "terms"
 
     # 4. CONTENT PATTERN signals
     if _has_product_detail_content(text_lower):
@@ -83,7 +93,13 @@ def classify_page(url: str, title: str = "", h1_tags: List[str] = None,
     if _has_product_listing_content(text_lower, internal_links):
         return "product_listing"
 
-    # 5. URL + TITLE keyword signals (weakest, used as fallback)
+    # 5. SEARCH RESULTS page
+    if parsed.query and any(q in parsed.query.lower() for q in ("q=", "query=", "search=", "keyword=")):
+        return "search"
+    if path in ("search", "find", "results") or any(k in title_lower for k in ("search results", "search for")):
+        return "search"
+
+    # 6. URL + TITLE keyword signals
     combined = f"{path} {title_lower}"
     if any(k in combined for k in ("about", "company", "team", "who-we-are", "mission", "our-story")):
         return "about"
@@ -93,8 +109,6 @@ def classify_page(url: str, title: str = "", h1_tags: List[str] = None,
         return "contact"
     if any(k in combined for k in ("location", "store-locator", "find-us", "branches")):
         return "location"
-    if any(k in combined for k in ("search", "results", "query")):
-        return "search"
     if any(k in combined for k in ("service", "solution", "offering", "capability")):
         return "service"
     if any(k in combined for k in ("blog", "article", "news", "post", "insights", "journal")):
@@ -158,7 +172,6 @@ def _has_product_detail_content(text_lower: str) -> bool:
 def _has_product_listing_content(text_lower: str, internal_links: List[str]) -> bool:
     """Check if page content looks like a product listing/category page."""
     matches = sum(1 for sig in _PRODUCT_LISTING_SIGNALS if sig in text_lower)
-    # Listings typically have many internal links to product pages
     has_many_links = len(internal_links) > 10
     return matches >= 1 and has_many_links
 
@@ -170,3 +183,43 @@ def _matches_any(segments, keywords: set) -> bool:
         if clean in keywords or any(kw in clean for kw in keywords):
             return True
     return False
+
+
+_COMMON_PREFIXES = {
+    # Language codes
+    "en", "es", "ja", "de", "fr", "ru", "zh", "pt", "it", "nl", "pl", "ar",
+    "ko", "sv", "vi", "fa", "uk", "he", "no", "fi", "cs", "da", "el", "tr",
+    # Common routing namespaces
+    "wiki", "pages", "p", "site", "view", "app", "portal"
+}
+
+_PORTAL_LEAF_NAMES = {
+    "home", "index", "index.html", "index.htm", "index.php", "default", "default.html",
+    "main", "main_page", "main-page", "portal", "welcome", "frontpage",
+    "accueil", "accueil_principal", "portada", "pagina_principale", "strona_glowna"
+}
+
+
+def get_effective_path_depth(url: str) -> int:
+    """
+    Computes the semantic hierarchy depth of a URL by stripping language/routing prefixes
+    and accounting for portal/index endpoints.
+    """
+    parsed = urlparse(url)
+    raw_segments = [s for s in parsed.path.strip("/").split("/") if s]
+    if not raw_segments:
+        return 0
+
+    segments = list(raw_segments)
+    # Strip language code or namespace prefix if present as the first segment
+    if len(segments) > 1 and segments[0].lower() in _COMMON_PREFIXES:
+        segments = segments[1:]
+
+    if not segments:
+        return 0
+
+    # If the remaining leaf represents a portal/main page, effective depth is 0
+    if len(segments) == 1 and segments[0].lower() in _PORTAL_LEAF_NAMES:
+        return 0
+
+    return len(segments)

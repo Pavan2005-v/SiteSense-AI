@@ -2,7 +2,7 @@
 Test suite for orchestrator deduplication and synthesis logic.
 """
 import pytest
-from skills.common.models import AuditFinding, SuggestedAction
+from skills.common.models import AuditFinding, SuggestedAction, CrawlSummary, PageData
 from skills.audit_orchestrator.scripts.orchestrate import deduplicate_findings
 
 
@@ -33,4 +33,37 @@ def test_entity_schema_and_authority_merging():
     assert "Missing Organization Knowledge-Graph" in consolidated.title
     assert "schema.org/Organization" in consolidated.evidence
     assert "Wikidata" in consolidated.evidence
+
+
+def test_proactive_recommendations_do_not_inflate_severity_counts():
+    """
+    Phase 15/23: summary.critical/high/medium/low count DEFECTS only. Proactive
+    recommendations are tracked separately and never inflate defect severity counts.
+    """
+    from skills.audit_orchestrator.scripts.report_builder import build_final_report, validate_report_schema
+
+    defect = AuditFinding(
+        id="", title="Sample defect", severity="medium", confidence="high",
+        evidence="Observed evidence.", category="engagement",
+        suggested_action=SuggestedAction(summary="Fix it", priority="medium"),
+        affected_urls=["https://example.com/"]
+    )
+    proactive = AuditFinding(
+        id="", title="Proactive: optional enhancement", severity="medium", confidence="medium",
+        evidence="Contextual opportunity.", category="discoverability",
+        suggested_action=SuggestedAction(summary="Consider it", priority="low"),
+        affected_urls=["https://example.com/"], is_proactive=True, recommendation_type="proactive"
+    )
+    summary = CrawlSummary(
+        target_domain="example.com", start_url="https://example.com",
+        crawled_at="2026-09-12T00:00:00Z",
+        pages=[PageData(url="https://example.com/", status_code=200, page_type="homepage")]
+    )
+    report = build_final_report(site="example.com", findings=[defect, proactive], crawl_summary=summary)
+
+    assert report["summary"]["medium"] == 1          # defects only
+    assert report["summary"]["total_defects"] == 1
+    assert report["summary"]["total_proactive"] == 1
+    assert report["summary"]["total_findings"] == 2
+    assert validate_report_schema(report) is True
 

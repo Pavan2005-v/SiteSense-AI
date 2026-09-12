@@ -42,6 +42,9 @@ def test_robots_wildcard_blocked():
 
 
 def test_render_gap_detected_on_empty_spa():
+    # Corrected behavior (Phase 3): a genuinely empty SPA shell is a real finding, but
+    # severity is never critical without a demonstrated render comparison, and the
+    # evidence no longer claims AI crawlers "cannot read" the site.
     page = PageData(
         url="https://example.com/app",
         status_code=200,
@@ -51,11 +54,13 @@ def test_render_gap_detected_on_empty_spa():
     )
     comparator = RenderComparator([page])
     issues = comparator.audit_render_gaps()
-    
+
     assert any(i["issue_type"] == "js_render_gap" for i in issues)
     issue = next(i for i in issues if i["issue_type"] == "js_render_gap")
-    assert issue["severity"] in ("critical", "high")
-    assert "empty SPA mount container" in issue["evidence"]
+    assert issue["severity"] in ("high", "medium")  # never critical from initial HTML alone
+    assert "initial HTTP response" in issue["evidence"]
+    # Must not overclaim about AI/accessibility
+    assert "cannot read" not in issue["evidence"].lower()
 
 
 def test_render_comparator_clean_on_perfect_site():

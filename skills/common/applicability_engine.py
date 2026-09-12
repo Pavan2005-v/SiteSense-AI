@@ -8,18 +8,18 @@ Architecture position:
 
 This prevents false positives from rules applied to inappropriate contexts.
 """
-from typing import Dict, Set
+from typing import Dict, Set, Optional
 
 
 # Rule → set of applicable page types
 # If a rule is not listed here, it applies to all page types.
 RULE_PAGE_APPLICABILITY: Dict[str, Set[str]] = {
-    # Product schema is only relevant on product detail pages (supports both 'product_detail' and legacy 'product')
+    # Product schema is only relevant on product detail pages
     "missing_product_schema": {"product_detail", "product"},
     "incomplete_offer_schema": {"product_detail", "product"},
     "price_schema_mismatch": {"product_detail", "product", "pricing"},
 
-    # CTA checks only on conversion-oriented pages
+    # CTA checks only on conversion-oriented pages with commercial intent
     "missing_clear_cta": {"homepage", "product_detail", "product", "pricing", "service", "landing"},
 
     # Noindex should only be flagged as defect on pages intended for public discovery
@@ -34,16 +34,16 @@ RULE_PAGE_APPLICABILITY: Dict[str, Set[str]] = {
     "navigation_dead_ends": {"homepage", "product_detail", "product", "product_listing", "pricing",
                              "service", "about", "article", "landing", "category", "general"},
 
-    # Breadcrumb checks — only on deep pages that are NOT legal/terms
-    "missing_deep_page_orientation": {"product_detail", "product", "product_listing", "article",
-                                      "documentation", "service", "category", "general"},
+    # Breadcrumb checks — only on deep hierarchical catalog/documentation pages
+    "missing_deep_page_orientation": {"product_detail", "product", "documentation", "category"},
 
     # Entity clarity checks
     "unbranded_page_titles": {"homepage", "product_detail", "product", "pricing", "service",
                               "about", "landing", "category"},
     "brand_entity_collision_risk": {"homepage"},
     "homepage_lacks_substantive_entity_description": {"homepage"},
-    "missing_org_schema":{"homepage"},
+    "missing_org_schema": {"homepage"},
+    "missing_authority_links": {"homepage"},
 
     # Freshness/corroboration applies broadly
     "stale_copyright": {"homepage", "product_detail", "product", "pricing", "service", "about",
@@ -51,6 +51,7 @@ RULE_PAGE_APPLICABILITY: Dict[str, Set[str]] = {
     "stale_roadmap": {"homepage", "product_detail", "product", "pricing", "service", "about",
                       "landing", "article"},
     "conflicting_pricing_claims": {"homepage", "pricing", "product_detail", "product", "service"},
+    "uncorroborated_superlative_claim": {"homepage", "pricing", "product_detail", "product", "service", "landing"},
 }
 
 # Rule → set of applicable site types (if restricted)
@@ -58,8 +59,11 @@ RULE_SITE_APPLICABILITY: Dict[str, Set[str]] = {
     "missing_product_schema": {"ecommerce", "marketplace"},
     "incomplete_offer_schema": {"ecommerce", "marketplace"},
     "price_schema_mismatch": {"ecommerce", "marketplace", "saas"},
-    "conflicting_pricing_claims": {"ecommerce", "saas", "marketplace"},
-    "missing_org_schema": {"corporate", "saas", "ecommerce", "marketplace", "local_business", "nonprofit"},
+    "conflicting_pricing_claims": {"ecommerce", "saas", "marketplace", "corporate"},
+    # Search portals and knowledge bases do not require commercial CTAs or ecommerce schemas
+    "missing_clear_cta": {"ecommerce", "saas", "corporate", "marketplace", "other", "local_business"},
+    # Hierarchical breadcrumb navigation is only applicable to sites with hierarchical taxonomies
+    "missing_deep_page_orientation": {"ecommerce", "marketplace", "documentation", "saas", "corporate", "other"},
 }
 
 
@@ -70,6 +74,10 @@ def is_rule_applicable(rule_id: str, page_type: str, site_type: str) -> bool:
     Returns True if the rule is applicable (should be evaluated).
     Returns False if the rule should be skipped for this context.
     """
+    # Site-type exemption: search portals & pure knowledge bases exempt from commercial CTA and hierarchical breadcrumbs
+    if site_type in ("search_portal", "knowledge_base") and rule_id in ("missing_deep_page_orientation", "missing_clear_cta", "vague_buzzword_value_prop"):
+        return False
+
     # Check page-type applicability
     if rule_id in RULE_PAGE_APPLICABILITY:
         if page_type not in RULE_PAGE_APPLICABILITY[rule_id]:

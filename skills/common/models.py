@@ -47,16 +47,20 @@ class SuggestedAction:
 class AuditFinding:
     id: str
     title: str
-    severity: str  # "critical", "high", "medium"
+    severity: str  # "critical", "high", "medium", "low", "info"
     evidence: str
     suggested_action: SuggestedAction
     category: Optional[str] = None
-    confidence: str = "high"  # "high", "medium", "low" — separate from severity
+    confidence: str = "high"  # "high", "medium", "low" — distinct from severity
     affected_urls: List[str] = field(default_factory=list)
     detection_method: Optional[str] = None
     is_proactive: bool = False
+    recommendation_type: str = "defect"  # "defect" | "proactive"
     why_it_matters: Optional[str] = None
     root_cause: Optional[str] = None
+    limitations: Optional[str] = None
+    applicability_status: Optional[str] = None
+    evidence_strength: str = "sufficient"
     observations: List[Observation] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -77,10 +81,15 @@ class AuditFinding:
         if self.is_proactive:
             d["is_proactive"] = True
             d["recommendation_type"] = "proactive"
+        else:
+            d["is_proactive"] = False
+            d["recommendation_type"] = "defect"
         if self.why_it_matters:
             d["why_it_matters"] = self.why_it_matters
         if self.root_cause:
             d["root_cause"] = self.root_cause
+        if self.limitations:
+            d["limitations"] = self.limitations
         return d
 
 
@@ -109,6 +118,10 @@ class PageData:
     depth: int = 0
     fetch_error: Optional[str] = None
     response_headers: Dict[str, str] = field(default_factory=dict)
+    is_spa_shell: bool = False
+    has_interstitial_challenge: bool = False
+    interactive_elements_count: int = 0
+    word_count: int = 0
 
 
 # --- Crawl Summary ---
@@ -124,10 +137,14 @@ class CrawlSummary:
     disallowed_for_ai: List[str] = field(default_factory=list)
     sitemap_found: bool = False
     sitemap_urls: List[str] = field(default_factory=list)
-    llms_txt_found: bool = False
-    llms_txt_content: str = " "
     crawl_errors: List[Dict[str, str]] = field(default_factory=list)
-    site_type: Optional[str] = None  # ecommerce, corporate, saas, publisher, docs, portfolio, local_business, other
+    site_type: str = "other"
     crawl_duration_seconds: float = 0.0
+    pages_discovered: int = 0
+    pages_queued: int = 0
+    pages_fetched: int = 0
     pages_skipped: int = 0
+    rejection_reasons: Dict[str, int] = field(default_factory=dict)
+    skipped_urls: Dict[str, str] = field(default_factory=dict)
     robots_blocked_urls: List[str] = field(default_factory=list)
+    crawl_limitations: List[str] = field(default_factory=list)

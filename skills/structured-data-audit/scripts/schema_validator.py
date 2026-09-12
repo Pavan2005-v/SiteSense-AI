@@ -1,14 +1,20 @@
 """
 Validates structured data against Schema.org specifications and page-type expectations.
+Applies strict context-awareness:
+- Product schema is only audited on confirmed product detail pages in applicable site contexts
+- Price consistency validates schema offers against rendered text
+- Syntax errors in JSON-LD are flagged deterministically
+- Organization schema is only flagged when entity clarity is genuinely at risk
 """
 from typing import List, Dict, Any, Optional
 import re
+from bs4 import BeautifulSoup
 from .schema_extractor import SchemaExtractor
 from skills.common.applicability_engine import is_rule_applicable
 
 
 class SchemaValidator:
-    def __init__(self, pages: List[Any], site_type: str = 'other'):
+    def __init__(self, pages: List[Any], site_type: str = "other"):
         self.pages = pages
         self.site_type = site_type
 
@@ -21,11 +27,12 @@ class SchemaValidator:
         syntax_error_items = []
         homepage_missing_org = False
         homepage_url = ""
+        homepage_has_strong_entity_signals = False
 
         for p in self.pages:
             extractor = SchemaExtractor(p.raw_html, p.url)
-            
-            # 1. Check for Syntax Errors
+
+            # 1. Check for Syntax Errors in JSON-LD
             for err in extractor.syntax_errors:
                 syntax_error_items.append(err)
 
@@ -39,9 +46,37 @@ class SchemaValidator:
                 )
             ):
                 homepage_url = p.url
-                org_schemas = extractor.get_schemas_by_type("Organization") + extractor.get_schemas_by_type("Corporation") + extractor.get_schemas_by_type("LocalBusiness")
+                org_schemas = (
+                    extractor.get_schemas_by_type("Organization") +
+                    extractor.get_schemas_by_type("Corporation") +
+                    extractor.get_schemas_by_type("LocalBusiness") +
+                    extractor.get_schemas_by_type("EducationalOrganization") +
+                    extractor.get_schemas_by_type("NGO")
+                )
                 if not org_schemas:
                     homepage_missing_org = True
+                    # Check if visible entity signals are already strong or if page is an unrendered SPA shell
+                    soup = BeautifulSoup(p.raw_html or "", "html.parser")
+                    text = (p.text_content or "").lower()
+                    title = (p.title or "").lower()
+
+                    # An unrendered SPA shell cannot be assessed for JSON-LD with confidence
+                    if getattr(p, "is_spa_shell", False):
+                        homepage_has_strong_entity_signals = True
+
+                    # Strong signals: branded title, descriptive copy, copyright, about links, or established archetype
+                    has_about_link = any("about" in a.get("href", "").lower() for a in soup.find_all("a", href=True))
+                    has_copyright = bool(re.search(r"©|copyright|\(c\)\s*(?:20\d\d|19\d\d)", text))
+                    has_branded_title = len(title.split()) >= 2 and any(sep in title for sep in ("|", "-", "—", ":"))
+                    has_descriptive_title = len(title.split()) >= 3
+
+                    if (
+                        has_branded_title or
+                        (has_about_link and has_copyright) or
+                        (has_descriptive_title and has_copyright) or
+                        self.site_type in ("search_portal", "knowledge_base", "marketplace", "educational")
+                    ):
+                        homepage_has_strong_entity_signals = True
 
             # 3. Check Product Pages
             if p.page_type in ("product_detail", "product"):
@@ -56,7 +91,6 @@ class SchemaValidator:
                             if not offers:
                                 product_schemas_with_missing_offers.append((p.url, prod.get("name", "Unnamed Product")))
                             else:
-                                # Verify offer has price
                                 if isinstance(offers, dict):
                                     if "price" not in offers and "priceSpecification" not in offers:
                                         product_schemas_with_missing_offers.append((p.url, prod.get("name", "Unnamed Product")))
@@ -68,10 +102,7 @@ class SchemaValidator:
                     offers = prod.get("offers")
                     if isinstance(offers, dict) and "price" in offers:
                         schema_price = str(offers["price"]).strip()
-                        # Check if schema price exists somewhere in visible text
-                        # If page contains explicit numbers like $99 but schema says 19, flag potential discrepancy
                         if schema_price and schema_price not in p.text_content:
-                            # Only flag if there are obvious dollar amounts on page
                             dollar_matches = re.findall(r"\$\s*(\d+(?:\.\d{2})?)", p.text_content)
                             if dollar_matches and schema_price not in dollar_matches:
                                 findings.append({
@@ -134,18 +165,19 @@ class SchemaValidator:
                 "affected_urls": urls
             })
 
-        # Process missing Organization on homepage
-        if homepage_missing_org:
-            findings.append({
-                "issue_type": "missing_org_schema",
-                "severity": "medium",
-                "title": "Homepage lacks Organization structured data",
-                "evidence": f"Homepage ({homepage_url or 'root'}) does not declare schema.org/Organization or LocalBusiness markup.",
-                "action": "Add an Organization JSON-LD script to the homepage with name, url, logo, description, and authoritative sameAs profiles (Wikidata, LinkedIn).",
-                "why_it_matters": "Organization schema establishes the core entity identity, which builds AI agent trust.",
-                "confidence": "medium",
-                "root_cause": "Homepage template is missing the Organization JSON-LD script.",
-                "affected_urls": [homepage_url] if homepage_url else []
-            })
+        # Process missing Organization on homepage ONLY when entity clarity is at risk
+        if homepage_missing_org and not homepage_has_strong_entity_signals:
+            if is_rule_applicable("missing_org_schema", "homepage", self.site_type):
+                findings.append({
+                    "issue_type": "missing_org_schema",
+                    "severity": "medium",
+                    "title": "Homepage lacks Organization structured data",
+                    "evidence": f"Homepage ({homepage_url or 'root'}) does not declare schema.org/Organization or LocalBusiness markup, and lacks unambiguous machine-readable entity identity.",
+                    "action": "Add an Organization JSON-LD script to the homepage with name, url, logo, description, and authoritative sameAs profiles (Wikidata, LinkedIn).",
+                    "why_it_matters": "Organization schema establishes the core entity identity, which builds AI agent trust.",
+                    "confidence": "medium",
+                    "root_cause": "Homepage template is missing the Organization JSON-LD script.",
+                    "affected_urls": [homepage_url] if homepage_url else []
+                })
 
         return findings

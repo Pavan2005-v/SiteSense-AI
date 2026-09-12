@@ -10,7 +10,7 @@ from tests.fixtures import PERFECT_HOMEPAGE_HTML
 
 
 def test_missing_llms_txt_is_proactive_not_defect():
-    # Site does not have llms.txt — must be emitted as is_proactive=True and not a critical/high defect
+    # Multi-page SaaS site without llms.txt — must be emitted as is_proactive=True and not a critical/high defect
     p1 = PageData(
         url="https://acmecloud.io/",
         status_code=200,
@@ -18,13 +18,28 @@ def test_missing_llms_txt_is_proactive_not_defect():
         text_content="AcmeCloud Enterprise Cloud Management Next-Generation Cloud Orchestration",
         page_type="homepage"
     )
+    p2 = PageData(
+        url="https://acmecloud.io/docs",
+        status_code=200,
+        raw_html="<html><body><h1>Documentation</h1><p>AcmeCloud guides and API reference documentation.</p></body></html>",
+        text_content="AcmeCloud guides and API reference documentation.",
+        page_type="documentation"
+    )
+    p3 = PageData(
+        url="https://acmecloud.io/pricing",
+        status_code=200,
+        raw_html="<html><body><h1>Pricing</h1><p>Enterprise subscription tiers and billing plans.</p><a href='/signup'>Start Free Trial</a></body></html>",
+        text_content="Enterprise subscription tiers and billing plans.",
+        page_type="pricing"
+    )
     summary = CrawlSummary(
         target_domain="acmecloud.io",
         start_url="https://acmecloud.io",
         crawled_at="2026-09-06T12:00:00Z",
-        pages=[p1],
+        pages=[p1, p2, p3],
         robots_txt_found=True,
-        robots_txt_content="User-agent: *\nAllow: /"
+        robots_txt_content="User-agent: *\nAllow: /",
+        site_type="saas"
     )
 
     orchestrator = AuditOrchestrator("https://acmecloud.io")
@@ -38,6 +53,30 @@ def test_missing_llms_txt_is_proactive_not_defect():
     assert llms_f.get("severity") == "low"
     assert llms_f["suggested_action"]["priority"] == "low"
     assert "not mandatory" in llms_f.get("evidence", "").lower() or "optional" in llms_f.get("evidence", "").lower()
+
+
+def test_missing_llms_txt_suppressed_on_unknown_or_ordinary_site():
+    # Ordinary or unknown sites do NOT receive proactive /llms.txt recommendation
+    p1 = PageData(
+        url="https://simpleblog.org/",
+        status_code=200,
+        raw_html="<html><body><h1>Welcome</h1><p>A simple blog.</p></body></html>",
+        text_content="A simple blog.",
+        page_type="homepage"
+    )
+    summary = CrawlSummary(
+        target_domain="simpleblog.org",
+        start_url="https://simpleblog.org",
+        crawled_at="2026-09-06T12:00:00Z",
+        pages=[p1],
+        robots_txt_found=True,
+        robots_txt_content="User-agent: *\nAllow: /",
+        site_type="other"
+    )
+    orchestrator = AuditOrchestrator("https://simpleblog.org")
+    report = orchestrator.run_full_audit(preloaded_summary=summary)
+    llms_findings = [f for f in report["findings"] if "/llms.txt" in f.get("title", "").lower()]
+    assert len(llms_findings) == 0
 
 
 def test_affected_urls_integrity_and_deduplication():
