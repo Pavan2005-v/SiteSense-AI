@@ -124,8 +124,10 @@ class CrawlSummary:
     disallowed_for_ai: List[str] = field(default_factory=list)
     sitemap_found: bool = False
     sitemap_urls: List[str] = field(default_factory=list)
+    llms_txt_found: bool = False
+    llms_txt_content: str = " "
     crawl_errors: List[Dict[str, str]] = field(default_factory=list)
-    site_type: str = "other"  # ecommerce, corporate, saas, publisher, docs, portfolio, local_business, other
+    site_type: Optional[str] = None  # ecommerce, corporate, saas, publisher, docs, portfolio, local_business, other
     crawl_duration_seconds: float = 0.0
     pages_skipped: int = 0
     robots_blocked_urls: List[str] = field(default_factory=list)

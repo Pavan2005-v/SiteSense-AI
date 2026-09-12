@@ -21,7 +21,7 @@ from skills.freshness_corroboration.scripts.audit_freshness import run_freshness
 from skills.entity_clarity_audit.scripts.audit_entity import run_entity_clarity_audit
 from skills.engagement_audit.scripts.audit_engagement import run_engagement_audit
 from .report_builder import build_final_report, build_human_report, validate_report_schema
-
+from skills.common.applicability_engine import is_rule_applicable
 
 SEVERITY_ORDER = {"critical": 3, "high": 2, "medium": 1, "low": 0, "info": 0}
 
@@ -257,7 +257,8 @@ def deduplicate_findings(raw_findings: List[AuditFinding]) -> List[AuditFinding]
 
 
 def generate_proactive_recommendations(
-    crawl_summary: CrawlSummary
+    crawl_summary: CrawlSummary,
+    allow_unknown_site_type: bool = False
 ) -> List[AuditFinding]:
     """
     Generates high-value proactive improvements that strengthen discoverability or engagement
@@ -269,8 +270,26 @@ def generate_proactive_recommendations(
 
     # 1. Proactive llms.txt discovery manifest
     # Only recommend if site does NOT already have an /llms.txt manifest
-    has_llms_txt = any("/llms.txt" in p.url.lower() for p in crawl_summary.pages)
-    if not has_llms_txt:
+    site_type = getattr(crawl_summary, "site_type", None)
+    
+    has_llms_txt = getattr(crawl_summary, "llms_txt_found", False)
+    llms_relevant_types = {
+        "corporate",
+        "saas",
+        "ecommerce",
+        "marketplace",
+        "publisher",
+        "documentation",
+        "local_business",
+        "nonprofit",
+    }
+    if not has_llms_txt and (
+        site_type in llms_relevant_types
+        or (
+            allow_unknown_site_type
+            and site_type == "other"
+        )
+    ):
         proactive.append(AuditFinding(
             id="",
             title="Proactive: Consider deploying an /llms.txt discovery manifest",
@@ -292,7 +311,18 @@ def generate_proactive_recommendations(
 
     # 2. Proactive FAQPage Schema for Conversational AI
     has_faq_schema = any("faqpage" in (p.raw_html or "").lower() for p in crawl_summary.pages)
-    if not has_faq_schema and len(crawl_summary.pages) > 0:
+        # Only recommend FAQPage when actual FAQ/question-answer content exists.
+    # Absence of FAQ schema alone is NOT evidence of a problem.
+    faq_content_detected = any(
+        re.search(
+            r"\b(frequently asked questions|faq|common questions|questions and answers)\b",
+            (p.raw_html or "")[:200000],
+            re.IGNORECASE
+        )
+        for p in crawl_summary.pages
+    )
+
+    if not has_faq_schema and faq_content_detected:
         conversion_urls = [
             p.url for p in crawl_summary.pages
             if p.page_type in ("homepage", "pricing", "product_detail", "service")
@@ -334,11 +364,24 @@ class AuditOrchestrator:
         """
         if preloaded_summary:
             crawl_summary = preloaded_summary
-            # Ensure site_type is inferred if not pre-populated
-            if not getattr(crawl_summary, "site_type", None) or crawl_summary.site_type == "other":
-                crawl_summary.site_type = classify_site(crawl_summary.pages, crawl_summary.target_domain)
+
+            site_type_was_missing = not getattr(
+                crawl_summary,
+                "site_type",
+                None
+            )
+
+            if site_type_was_missing:
+                crawl_summary.site_type = classify_site(
+                    crawl_summary.pages,
+                    crawl_summary.target_domain
+                )
         else:
-            crawler = BoundedCrawler(self.target_url, max_pages=self.max_pages)
+            site_type_was_missing = False
+            crawler = BoundedCrawler(
+                self.target_url,
+                max_pages=self.max_pages
+            )
             crawl_summary = crawler.crawl()
 
         raw_findings: List[AuditFinding] = []
@@ -377,7 +420,10 @@ class AuditOrchestrator:
             f.title = sync_title_page_count(f.title, len(f.affected_urls))
 
         # 4. Proactive Recommendations (Part 21)
-        proactive = generate_proactive_recommendations(crawl_summary)
+        proactive = generate_proactive_recommendations(
+            crawl_summary,
+            allow_unknown_site_type=site_type_was_missing
+        )
         for p in proactive:
             validate_and_clean_finding_urls(p, target_domain, crawl_summary)
 
